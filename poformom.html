@@ -1,0 +1,1355 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Controle de Producao</title>
+    <script>
+        window.tailwind = window.tailwind || {};
+        window.tailwind.config = { darkMode: 'class' };
+        (function() {
+            const GLOBAL_THEME_KEY = 'po-theme-global';
+            const savedTheme = localStorage.getItem(GLOBAL_THEME_KEY);
+            const preferredTheme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.classList.toggle('dark', preferredTheme === 'dark');
+            document.documentElement.style.colorScheme = preferredTheme;
+        })();
+    </script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            color-scheme: light;
+        }
+
+        body {
+            font-family: "Segoe UI", "Trebuchet MS", sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(59, 130, 246, 0.12), transparent 28%),
+                radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 24%),
+                linear-gradient(180deg, #f8fafc 0%, #eef4ff 100%);
+        }
+
+        .dark body {
+            background:
+                radial-gradient(circle at top left, rgba(56, 189, 248, 0.12), transparent 24%),
+                radial-gradient(circle at top right, rgba(34, 197, 94, 0.08), transparent 20%),
+                linear-gradient(180deg, #020617 0%, #0f172a 100%);
+        }
+
+        .kanban-col::-webkit-scrollbar,
+        .orders-list::-webkit-scrollbar,
+        .calendar-aside-list::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        .kanban-col::-webkit-scrollbar-track,
+        .orders-list::-webkit-scrollbar-track,
+        .calendar-aside-list::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .kanban-col::-webkit-scrollbar-thumb,
+        .orders-list::-webkit-scrollbar-thumb,
+        .calendar-aside-list::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 999px;
+        }
+
+        .dark .kanban-col::-webkit-scrollbar-thumb,
+        .dark .orders-list::-webkit-scrollbar-thumb,
+        .dark .calendar-aside-list::-webkit-scrollbar-thumb {
+            background-color: #475569;
+        }
+
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.94);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(148, 163, 184, 0.35);
+            box-shadow: 0 18px 50px rgba(15, 23, 42, 0.1);
+        }
+
+        .dark .glass-panel {
+            background: rgba(15, 23, 42, 0.82);
+            border-color: rgba(71, 85, 105, 0.45);
+            box-shadow: 0 18px 60px rgba(2, 6, 23, 0.45);
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .dashboard-shell {
+            background:
+                linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.9)),
+                radial-gradient(circle at top, rgba(96, 165, 250, 0.12), transparent 40%);
+        }
+
+        .dark .dashboard-shell {
+            background:
+                linear-gradient(180deg, rgba(2, 6, 23, 0.9), rgba(15, 23, 42, 0.95)),
+                radial-gradient(circle at top, rgba(14, 165, 233, 0.14), transparent 38%);
+        }
+    </style>
+</head>
+<body class="text-slate-800 dark:text-slate-200 min-h-screen flex flex-col transition-colors duration-200">
+
+    <!-- Main App Container -->
+    <div id="app" class="flex-1 flex flex-col min-h-screen w-full">
+        <!-- Renders dynamically based on state -->
+        <div class="flex items-center justify-center h-full">
+            <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
+        </div>
+    </div>
+
+    <!-- Modals Container -->
+    <div id="modal-root"></div>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Firebase Initialization ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyA4r7Qmp_Gw0zBcbcl8NIh6rnkhdVtbSUI",
+            authDomain: "po-for-mom.firebaseapp.com",
+            projectId: "po-for-mom",
+            storageBucket: "po-for-mom.firebasestorage.app",
+            messagingSenderId: "613783019650",
+            appId: "1:613783019650:web:9bb9c7e2009ddd6dac149b",
+            measurementId: "G-H4CF6VKQ93"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = 'po-for-mom';
+        const GLOBAL_THEME_KEY = 'po-theme-global';
+        const USER_THEME_PREFIX = 'po-theme-user:';
+
+        function readStoredTheme(username = '') {
+            const normalized = username ? username.trim().toLowerCase() : '';
+            const userTheme = normalized ? localStorage.getItem(`${USER_THEME_PREFIX}${normalized}`) : null;
+            return userTheme || localStorage.getItem(GLOBAL_THEME_KEY) || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+        }
+
+        function applyTheme(theme) {
+            const resolved = theme === 'dark' ? 'dark' : 'light';
+            document.documentElement.classList.toggle('dark', resolved === 'dark');
+            document.documentElement.style.colorScheme = resolved;
+            return resolved;
+        }
+
+        function saveThemePreference(theme, username = '') {
+            const resolved = applyTheme(theme);
+            localStorage.setItem(GLOBAL_THEME_KEY, resolved);
+            const normalized = username ? username.trim().toLowerCase() : '';
+            if (normalized) {
+                localStorage.setItem(`${USER_THEME_PREFIX}${normalized}`, resolved);
+            }
+            return resolved;
+        }
+
+        // --- App State ---
+        let state = {
+            isLoaded: false,
+            firebaseUser: null,
+            appUser: null, // { username, role, id }
+            users: [],
+            pos: [],
+            history: [],
+            searchQuery: '',
+            orderSearchQuery: '',
+            orderSearchScope: 'all',
+            expandedOrders: [],
+            theme: readStoredTheme(),
+            currentView: 'board', // 'board' or 'archived'
+            calendarDate: new Date()
+        };
+
+        const stages = [
+            { id: 'art', name: 'Arte', color: 'bg-blue-100 text-blue-800 border-blue-200', dot: 'bg-blue-500' },
+            { id: 'printing', name: 'Impressao', color: 'bg-purple-100 text-purple-800 border-purple-200', dot: 'bg-purple-500' },
+            { id: 'cutting', name: 'Corte', color: 'bg-yellow-100 text-yellow-800 border-yellow-200', dot: 'bg-yellow-500' },
+            { id: 'sewing', name: 'Costura', color: 'bg-orange-100 text-orange-800 border-orange-200', dot: 'bg-orange-500' },
+            { id: 'packaging', name: 'Embalagem', color: 'bg-teal-100 text-teal-800 border-teal-200', dot: 'bg-teal-500' },
+            { id: 'delivery', name: 'Pronto/Entrega', color: 'bg-green-100 text-green-800 border-green-200', dot: 'bg-green-500' }
+        ];
+
+        // --- Core Functions ---
+        
+        function setState(updates) {
+            state = { ...state, ...updates };
+            if (updates.theme) applyTheme(updates.theme);
+            render();
+        }
+
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (err) {
+                console.error("Auth error:", err);
+                alert("Falha na autenticacao. Verifique o console.");
+            }
+        };
+
+        function getRoleLabel(role) {
+            if (role === 'admin') return 'Administrador';
+            if (role === 'employee') return 'Funcionario';
+            return role;
+        }
+
+        function formatDateForDisplay(dateString) {
+            if (!dateString) return '';
+            const date = new Date(`${dateString}T00:00:00`);
+            return Number.isNaN(date.getTime()) ? dateString : date.toLocaleDateString('pt-BR');
+        }
+
+        function formatDateTimeForDisplay(timestamp) {
+            return new Date(timestamp).toLocaleString('pt-BR');
+        }
+
+        function getDaysUntil(dateString) {
+            if (!dateString) return null;
+            const today = new Date();
+            const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+            const end = new Date(`${dateString}T00:00:00`);
+            if (Number.isNaN(end.getTime())) return null;
+            return Math.ceil((end - start) / (1000 * 60 * 60 * 24));
+        }
+
+        function getDeadlineLabel(po) {
+            if (!po.dateRangeEnd) return 'Sem prazo';
+            const daysUntil = getDaysUntil(po.dateRangeEnd);
+            if (daysUntil === null) return formatDateForDisplay(po.dateRangeEnd);
+            if (daysUntil < 0) return `${Math.abs(daysUntil)} dia(s) atrasado`;
+            if (daysUntil === 0) return 'Entrega hoje';
+            if (daysUntil === 1) return 'Entrega amanha';
+            return `Entrega em ${daysUntil} dias`;
+        }
+
+        function getStageMeta(stageId) {
+            return stages.find(stage => stage.id === stageId) || stages[0];
+        }
+
+        function getActivePOs() {
+            return state.pos.filter(po => !po.archived);
+        }
+
+        function getArchivedPOs() {
+            return state.pos.filter(po => po.archived);
+        }
+
+        function getBoardSearchPOs() {
+            return getActivePOs().filter(po => matchSearch(po));
+        }
+
+        function getPOStageCount(stageId) {
+            return getActivePOs().filter(po => po.stage === stageId).length;
+        }
+
+        function getUrgentPOs() {
+            return getActivePOs().filter(po => {
+                const daysUntil = getDaysUntil(po.dateRangeEnd);
+                return daysUntil !== null && daysUntil <= 3;
+            }).length;
+        }
+
+        function matchOrderSearch(po) {
+            if (!state.orderSearchQuery) return true;
+            const terms = state.orderSearchQuery.toLowerCase().split(/\s+/).filter(Boolean);
+            const searchableText = [
+                po.title,
+                po.description || '',
+                po.itemType || '',
+                po.notes || '',
+                po.clothType || '',
+                po.stage || '',
+                po.archived ? 'arquivado inativo concluido' : 'ativo andamento',
+                po.paymentFinished ? 'pago concluido' : 'pendente'
+            ].join(' ').toLowerCase();
+            return terms.every(term => searchableText.includes(term));
+        }
+
+        function getVisibleOrdersForExplorer() {
+            return state.pos
+                .filter(po => {
+                    if (state.orderSearchScope === 'active') return !po.archived;
+                    if (state.orderSearchScope === 'archived') return po.archived;
+                    return true;
+                })
+                .filter(matchOrderSearch)
+                .sort((a, b) => {
+                    const aDate = a.dateRangeEnd || '9999-12-31';
+                    const bDate = b.dateRangeEnd || '9999-12-31';
+                    if (a.archived !== b.archived) return Number(a.archived) - Number(b.archived);
+                    return aDate.localeCompare(bDate) || (b.updatedAt || 0) - (a.updatedAt || 0);
+                });
+        }
+
+        function isOrderExpanded(orderId) {
+            return state.expandedOrders.includes(orderId);
+        }
+
+        function toggleOrderExpanded(orderId) {
+            const expandedOrders = isOrderExpanded(orderId)
+                ? state.expandedOrders.filter(id => id !== orderId)
+                : [...state.expandedOrders, orderId];
+            setState({ expandedOrders });
+        }
+
+        // Initialize App
+        initAuth();
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                setState({ firebaseUser: user });
+                setupListeners();
+            } else {
+                setState({ firebaseUser: null, isLoaded: true });
+            }
+        });
+
+        let unsubUsers, unsubPos, unsubHistory;
+
+        function setupListeners() {
+            if (!state.firebaseUser) return;
+
+            const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'app_users');
+            unsubUsers = onSnapshot(usersRef, (snapshot) => {
+                const users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setState({ users, isLoaded: true });
+            }, (err) => console.error(err));
+
+            const posRef = collection(db, 'artifacts', appId, 'public', 'data', 'pos');
+            unsubPos = onSnapshot(posRef, (snapshot) => {
+                const pos = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                setState({ pos });
+            }, (err) => console.error(err));
+
+            const historyRef = collection(db, 'artifacts', appId, 'public', 'data', 'history');
+            unsubHistory = onSnapshot(historyRef, (snapshot) => {
+                const history = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                // Sort history locally (No complex Firebase queries)
+                history.sort((a, b) => b.timestamp - a.timestamp);
+                setState({ history });
+            }, (err) => console.error(err));
+        }
+
+        // --- Database Actions ---
+
+        async function logHistory(action, details, poName = "") {
+            if (!state.appUser) return;
+            const historyId = Date.now().toString() + Math.random().toString(36).substr(2, 5);
+            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'history', historyId);
+            await setDoc(ref, {
+                timestamp: Date.now(),
+                user: state.appUser.username,
+                role: state.appUser.role,
+                action,
+                details,
+                poName
+            });
+        }
+
+        async function savePO(poData, isNew = false) {
+            const id = isNew ? Date.now().toString() : poData.id;
+            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'pos', id);
+            
+            const payload = {
+                ...poData,
+                id,
+                updatedAt: Date.now()
+            };
+            if (isNew) payload.createdAt = Date.now();
+
+            await setDoc(ref, payload);
+            
+            logHistory(
+                isNew ? "Pedido criado" : "Pedido atualizado", 
+                isNew ? `Criou novo pedido: ${poData.title}` : `Atualizou os detalhes de ${poData.title}`,
+                poData.title
+            );
+            closeModal();
+        }
+
+        async function updatePOStage(poId, newStage) {
+            const po = state.pos.find(p => p.id === poId);
+            if (!po) return;
+
+            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'pos', poId);
+            await setDoc(ref, { ...po, stage: newStage, updatedAt: Date.now() });
+            
+            const stageName = stages.find(s => s.id === newStage)?.name || newStage;
+            logHistory("Pedido movido", `Moveu para ${stageName}`, po.title);
+        }
+
+        async function toggleArchive(poId, archiveStatus) {
+            const po = state.pos.find(p => p.id === poId);
+            if (!po) return;
+
+            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'pos', poId);
+            await setDoc(ref, { ...po, archived: archiveStatus, updatedAt: Date.now() });
+            
+            logHistory(archiveStatus ? "Pedido arquivado" : "Pedido restaurado", archiveStatus ? "Marcado como concluido e arquivado" : "Restaurado do arquivo", po.title);
+        }
+
+        async function updatePaymentStatus(poId, isPaid) {
+            const po = state.pos.find(p => p.id === poId);
+            if (!po) return;
+
+            const ref = doc(db, 'artifacts', appId, 'public', 'data', 'pos', poId);
+            await setDoc(ref, { ...po, paymentFinished: isPaid, updatedAt: Date.now() });
+            
+            logHistory("Pagamento atualizado", `Marcou o pagamento como ${isPaid ? 'Concluido' : 'Pendente'}`, po.title);
+        }
+
+        // --- Auth Actions ---
+
+        async function handleLogin(username, password) {
+            username = username.trim().toLowerCase();
+            
+            // Check if users exist at all. If not, make first user Admin
+            if (state.users.length === 0) {
+                const newUserId = Date.now().toString();
+                const newUser = { id: newUserId, username, password, role: 'admin' };
+                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'app_users', newUserId), newUser);
+                setState({ appUser: newUser, theme: readStoredTheme(username) });
+                return;
+            }
+
+            const user = state.users.find(u => u.username === username && u.password === password);
+            if (user) {
+                setState({ appUser: user, theme: readStoredTheme(user.username) });
+            } else {
+                // If username doesn't exist, create as employee (Simple creation flow as requested)
+                const exists = state.users.find(u => u.username === username);
+                if (!exists) {
+                    const newUserId = Date.now().toString();
+                    const newUser = { id: newUserId, username, password, role: 'employee' };
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'app_users', newUserId), newUser);
+                    setState({ appUser: newUser, theme: readStoredTheme(username) });
+                } else {
+                    alert("Senha incorreta.");
+                }
+            }
+        }
+
+        function toggleTheme() {
+            const nextTheme = state.theme === 'dark' ? 'light' : 'dark';
+            const savedTheme = saveThemePreference(nextTheme, state.appUser?.username || '');
+            setState({ theme: savedTheme });
+        }
+
+        function handleLogout() {
+            setState({
+                appUser: null,
+                currentView: 'board',
+                searchQuery: '',
+                orderSearchQuery: '',
+                orderSearchScope: 'all',
+                expandedOrders: [],
+                theme: readStoredTheme()
+            });
+        }
+
+
+        // --- UI Renderers ---
+
+        function render() {
+            const appDiv = document.getElementById('app');
+            if (!state.isLoaded) return; // Keeps loading spinner
+
+            if (!state.appUser) {
+                appDiv.innerHTML = getLoginHTML();
+            } else {
+                appDiv.innerHTML = getDashboardHTML();
+                renderCalendar();
+            }
+            lucide.createIcons();
+            attachGlobalListeners();
+        }
+
+        function getLegacyLoginHTML() {
+            return `
+                <div class="flex items-center justify-center h-full w-full bg-slate-100 dark:bg-slate-800">
+                    <div class="bg-white dark:bg-slate-900 p-8 rounded-xl shadow-lg w-full max-w-md border border-slate-200 dark:border-slate-700">
+                        <div class="flex justify-center mb-6 text-blue-600 dark:text-blue-400">
+                            <i data-lucide="layout-dashboard" class="w-12 h-12"></i>
+                        </div>
+                        <h1 class="text-2xl font-bold text-center mb-2 text-slate-800 dark:text-white">Controle de Producao</h1>
+                        <p class="text-center text-slate-500 dark:text-slate-400 mb-6 text-sm">
+                            ${state.users.length === 0 ? "O primeiro login vira administrador." : "Digite usuario e senha."}
+                        </p>
+                        
+                        <form id="login-form" class="space-y-4">
+                            <div>
+                                <label class="block text-sm font-medium mb-1">Usuario</label>
+                                <input type="text" id="login-user" required class="w-full p-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" placeholder="ex.: erika">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium mb-1">Senha</label>
+                                <input type="password" id="login-pass" required class="w-full p-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-800 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow" placeholder="••••••••">
+                            </div>
+                            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold p-3 rounded-lg transition-colors">
+                                Entrar
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getLoginHTML() {
+            return `
+                <div class="min-h-screen w-full flex items-center justify-center px-4 py-10">
+                    <div class="w-full max-w-6xl grid lg:grid-cols-[1.15fr_0.85fr] gap-6 items-stretch">
+                        <div class="glass-panel rounded-[32px] p-8 md:p-10 flex flex-col justify-between overflow-hidden relative">
+                            <div class="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.16),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(16,185,129,0.12),transparent_26%)] dark:bg-[radial-gradient(circle_at_top_left,rgba(56,189,248,0.12),transparent_28%),radial-gradient(circle_at_bottom_right,rgba(34,197,94,0.1),transparent_24%)]"></div>
+                            <div class="relative">
+                                <div class="flex items-center justify-between gap-4 mb-8">
+                                    <div class="inline-flex items-center gap-3">
+                                        <div class="bg-slate-900 dark:bg-sky-500 text-white p-3 rounded-2xl shadow-lg">
+                                            <i data-lucide="layout-dashboard" class="w-6 h-6"></i>
+                                        </div>
+                                        <div>
+                                            <p class="text-xs font-bold uppercase tracking-[0.25em] text-sky-700 dark:text-sky-300">Controle interno</p>
+                                            <h1 class="text-xl md:text-2xl font-black text-slate-900 dark:text-white">Producao sem ruido</h1>
+                                        </div>
+                                    </div>
+                                    <button id="btn-theme-toggle" class="inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
+                                        <i data-lucide="${state.theme === 'dark' ? 'sun-medium' : 'moon-star'}" class="w-4 h-4"></i>
+                                        <span class="text-sm font-semibold">${state.theme === 'dark' ? 'Modo claro' : 'Modo escuro'}</span>
+                                    </button>
+                                </div>
+
+                                <div class="space-y-6">
+                                    <div>
+                                        <p class="text-sm font-bold uppercase tracking-[0.25em] text-slate-700 dark:text-slate-400">Painel da oficina</p>
+                                        <h2 class="mt-3 text-4xl md:text-5xl font-black tracking-tight text-slate-900 dark:text-white">Entrar e continuar exatamente no tema certo.</h2>
+                                        <p class="mt-4 text-base md:text-lg text-slate-600 dark:text-slate-300 max-w-2xl">O tema agora fica consistente entre login e painel, e a preferencia pode ser salva por usuario no navegador.</p>
+                                    </div>
+
+                                    <div class="grid sm:grid-cols-3 gap-3">
+                                        <div class="rounded-2xl bg-white dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 p-4 shadow-sm dark:shadow-none">
+                                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-slate-700 dark:text-slate-400">Fluxo</p>
+                                            <p class="text-2xl font-black text-slate-900 dark:text-white mt-2">1 painel</p>
+                                            <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">Login, quadro, calendario e lista completa com a mesma identidade.</p>
+                                        </div>
+                                        <div class="rounded-2xl bg-white dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 p-4 shadow-sm dark:shadow-none">
+                                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-slate-700 dark:text-slate-400">Tema</p>
+                                            <p class="text-2xl font-black text-slate-900 dark:text-white mt-2">${state.theme === 'dark' ? 'Escuro' : 'Claro'}</p>
+                                            <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">Persistido no navegador e reaplicado antes de renderizar.</p>
+                                        </div>
+                                        <div class="rounded-2xl bg-white dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 p-4 shadow-sm dark:shadow-none">
+                                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-slate-700 dark:text-slate-400">Acesso</p>
+                                            <p class="text-2xl font-black text-slate-900 dark:text-white mt-2">${state.users.length}</p>
+                                            <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">${state.users.length === 0 ? "Primeiro acesso cria o administrador." : "Usuarios salvos prontos para entrar."}</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="relative mt-8 flex flex-wrap gap-2 text-xs font-semibold text-slate-700 dark:text-slate-400">
+                                <span class="px-3 py-1.5 rounded-full bg-white dark:bg-slate-900/80 border border-slate-300 dark:border-slate-700">Busca separada por area</span>
+                                <span class="px-3 py-1.5 rounded-full bg-white dark:bg-slate-900/80 border border-slate-300 dark:border-slate-700">Calendario legivel</span>
+                                <span class="px-3 py-1.5 rounded-full bg-white dark:bg-slate-900/80 border border-slate-300 dark:border-slate-700">Pedidos expansivos</span>
+                            </div>
+                        </div>
+
+                        <div class="glass-panel rounded-[32px] p-8 md:p-10 border border-slate-300 dark:border-slate-700">
+                            <div class="mb-8">
+                                <p class="text-xs font-bold uppercase tracking-[0.25em] text-slate-700 dark:text-slate-400">Acesso</p>
+                                <h3 class="mt-2 text-3xl font-black text-slate-900 dark:text-white">Controle de Producao</h3>
+                                <p class="mt-3 text-sm text-slate-600 dark:text-slate-300">
+                                    ${state.users.length === 0 ? "O primeiro login vira administrador." : "Digite usuario e senha para entrar."}
+                                </p>
+                            </div>
+                            
+                            <form id="login-form" class="space-y-5">
+                                <div>
+                                    <label class="block text-sm font-bold mb-2 text-slate-700 dark:text-slate-200">Usuario</label>
+                                    <input type="text" id="login-user" required class="w-full px-4 py-3.5 rounded-2xl border border-slate-400 dark:border-slate-600 bg-white dark:bg-slate-900/80 focus:ring-2 focus:ring-sky-500 outline-none transition-shadow text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 shadow-sm">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-bold mb-2 text-slate-700 dark:text-slate-200">Senha</label>
+                                    <input type="password" id="login-pass" required class="w-full px-4 py-3.5 rounded-2xl border border-slate-400 dark:border-slate-600 bg-white dark:bg-slate-900/80 focus:ring-2 focus:ring-sky-500 outline-none transition-shadow text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 shadow-sm">
+                                </div>
+                                <button type="submit" class="w-full bg-slate-900 hover:bg-slate-700 dark:bg-sky-500 dark:hover:bg-sky-400 text-white font-bold p-3.5 rounded-2xl transition-colors shadow-lg shadow-slate-900/15 dark:shadow-sky-500/20">
+                                    Entrar
+                                </button>
+                            </form>
+
+                            <div class="mt-6 pt-6 border-t border-slate-300 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-400">
+                                A preferencia de tema fica salva neste navegador. Depois do login, ela tambem pode ficar associada a esse usuario.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function getDashboardHTML() {
+            const isAdmin = state.appUser?.role === 'admin';
+            const activePOs = getActivePOs();
+            const archivedPOs = getArchivedPOs();
+            const boardPOs = getBoardSearchPOs();
+            
+            return `
+                <div class="dashboard-shell min-h-screen">
+                    <header class="sticky top-0 z-20 border-b border-slate-200/80 dark:border-slate-800/90 bg-white/85 dark:bg-slate-950/80 backdrop-blur-xl">
+                        <div class="max-w-[1700px] mx-auto px-4 md:px-6 py-4 flex flex-col gap-4">
+                            <div class="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
+                                <div class="flex items-start gap-4">
+                                    <div class="bg-slate-900 dark:bg-sky-500 text-white p-3 rounded-2xl shadow-lg shadow-slate-900/15 dark:shadow-sky-500/20">
+                                        <i data-lucide="layers-3" class="w-6 h-6"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs font-bold uppercase tracking-[0.25em] text-sky-700 dark:text-sky-300">Painel de producao</p>
+                                        <h1 class="text-2xl md:text-3xl font-black tracking-tight text-slate-900 dark:text-white">Producao da Oficina</h1>
+                                        <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">Quadro principal em cima, calendario no meio e explorador completo de pedidos no fim da pagina.</p>
+                                    </div>
+                                </div>
+
+                                <div class="flex flex-wrap items-center gap-3">
+                                    <div class="flex flex-col items-start sm:items-end mr-0 sm:mr-2">
+                                        <span class="text-sm font-bold capitalize text-slate-900 dark:text-white">${state.appUser.username}</span>
+                                        <span class="text-xs px-2.5 py-1 rounded-full bg-slate-900 dark:bg-sky-500 text-white">${getRoleLabel(state.appUser.role)}</span>
+                                    </div>
+
+                                    <button id="btn-theme-toggle" class="px-3 py-2.5 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex items-center gap-2" title="Alternar tema">
+                                        <i data-lucide="${state.theme === 'dark' ? 'sun-medium' : 'moon-star'}" class="w-4 h-4"></i>
+                                        <span>${state.theme === 'dark' ? 'Claro' : 'Escuro'}</span>
+                                    </button>
+
+                                    <button id="btn-new-po" class="bg-sky-600 hover:bg-sky-700 text-white px-4 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 transition-colors shadow-lg shadow-sky-600/20">
+                                        <i data-lucide="plus" class="w-4 h-4"></i><span>Novo Pedido</span>
+                                    </button>
+
+                                    ${isAdmin ? `
+                                        <button id="btn-history" class="px-3 py-2.5 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex items-center gap-2" title="Historico">
+                                            <i data-lucide="clock-3" class="w-4 h-4"></i><span class="hidden sm:inline">Historico</span>
+                                        </button>
+                                    ` : ''}
+
+                                    <button id="btn-toggle-view" class="px-3 py-2.5 text-slate-600 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-colors flex items-center gap-2" title="${state.currentView === 'board' ? 'Ver Arquivo' : 'Ver Quadro'}">
+                                        <i data-lucide="${state.currentView === 'board' ? 'archive' : 'layout-grid'}" class="w-4 h-4"></i>
+                                        <span>${state.currentView === 'board' ? 'Arquivo' : 'Quadro'}</span>
+                                    </button>
+
+                                    <button id="btn-logout" class="px-3 py-2.5 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors flex items-center gap-2" title="Sair">
+                                        <i data-lucide="log-out" class="w-4 h-4"></i><span class="hidden sm:inline">Sair</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                                <div class="glass-panel rounded-2xl p-4 text-slate-900 dark:text-white">
+                                    <p class="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 font-bold">Pedidos ativos</p>
+                                    <p class="text-3xl font-black text-slate-900 dark:text-white mt-2">${activePOs.length}</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-300 mt-1">Em andamento no quadro.</p>
+                                </div>
+                                <div class="glass-panel rounded-2xl p-4 text-slate-900 dark:text-white">
+                                    <p class="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 font-bold">Urgentes</p>
+                                    <p class="text-3xl font-black text-amber-600 mt-2">${getUrgentPOs()}</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-300 mt-1">Vencendo hoje ou nos proximos 3 dias.</p>
+                                </div>
+                                <div class="glass-panel rounded-2xl p-4 text-slate-900 dark:text-white">
+                                    <p class="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 font-bold">Prontos</p>
+                                    <p class="text-3xl font-black text-emerald-600 mt-2">${getPOStageCount('delivery')}</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-300 mt-1">Na etapa final de entrega.</p>
+                                </div>
+                                <div class="glass-panel rounded-2xl p-4 text-slate-900 dark:text-white">
+                                    <p class="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 font-bold">Arquivados</p>
+                                    <p class="text-3xl font-black text-slate-700 dark:text-slate-100 mt-2">${archivedPOs.length}</p>
+                                    <p class="text-sm text-slate-500 dark:text-slate-300 mt-1">Concluidos e historicos.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    <main class="max-w-[1700px] mx-auto w-full px-4 md:px-6 py-6 space-y-6">
+                        <section class="glass-panel rounded-[28px] p-4 md:p-6">
+                            <div class="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 mb-5">
+                                <div>
+                                    <p class="text-xs font-bold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Area principal</p>
+                                    <h2 class="text-xl md:text-2xl font-black text-slate-900 dark:text-white mt-1">${state.currentView === 'board' ? 'Quadro de producao' : 'Arquivo de pedidos'}</h2>
+                                    <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">${state.currentView === 'board' ? 'A busca abaixo filtra apenas o quadro principal.' : 'A busca abaixo filtra apenas os pedidos arquivados desta area.'}</p>
+                                </div>
+                                <div class="w-full lg:max-w-xl">
+                                    <label for="search-input" class="block text-xs font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400 mb-2">Busca do quadro principal</label>
+                                    <div class="relative">
+                                        <i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                                        <input type="text" id="search-input" value="${state.searchQuery}" placeholder="Buscar no quadro principal..." class="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-sky-500 outline-none text-sm shadow-sm text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400">
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-4 flex flex-wrap gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                <span class="px-3 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700">${boardPOs.length} resultado(s)</span>
+                                <span class="px-3 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700">${activePOs.length} ativo(s) no total</span>
+                                <span class="px-3 py-1 rounded-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700">Role horizontalmente para ver todas as etapas</span>
+                            </div>
+                            ${state.currentView === 'board' ? getKanbanHTML() : getArchiveHTML()}
+                        </section>
+
+                        <section class="glass-panel rounded-[28px] p-4 md:p-6">
+                            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-5">
+                                <div>
+                                    <p class="text-xs font-bold uppercase tracking-[0.25em] text-slate-500 dark:text-slate-400">Agenda visual</p>
+                                    <h2 class="text-xl md:text-2xl font-black text-slate-900 dark:text-white mt-1">Calendario de prazos</h2>
+                                    <p class="text-sm text-slate-600 dark:text-slate-300 mt-1">Cada dia mostra quantos pedidos vencem e a lista lateral detalha os proximos vencimentos.</p>
+                                </div>
+                                <div class="flex gap-2 text-sm font-semibold">
+                                    <button id="cal-prev" class="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">&lt;</button>
+                                    <span id="cal-month-label" class="px-4 py-2 rounded-xl bg-slate-900 dark:bg-sky-500 text-white min-w-[170px] text-center">Mes</span>
+                                    <button id="cal-next" class="px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors">&gt;</button>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)] gap-5 items-start">
+                                <div id="calendar-container"></div>
+                                <div id="calendar-summary-container"></div>
+                            </div>
+                        </section>
+
+                        <section class="glass-panel rounded-[28px] p-4 md:p-6">
+                            ${getOrdersExplorerHTML()}
+                        </section>
+                    </main>
+                </div>
+            `;
+        }
+
+        // --- Filtering & Logic Helpers ---
+        function matchSearch(po) {
+            if (!state.searchQuery) return true;
+            const terms = state.searchQuery.toLowerCase().split(/\s+/);
+            const searchableText = `${po.title} ${po.description || ''} ${po.itemType} ${po.notes || ''}`.toLowerCase();
+            // All terms must be present somewhere (allows "erika fogueira" to match "Erika - Festa Fogueira")
+            return terms.every(term => searchableText.includes(term));
+        }
+
+        function getWarnings(po) {
+            const warnings = [];
+            const now = new Date();
+            
+            // Un-updated warning (3 days)
+            const daysSinceUpdate = (now - new Date(po.updatedAt || po.createdAt)) / (1000 * 60 * 60 * 24);
+            if (daysSinceUpdate > 3 && po.stage !== 'delivery') {
+                warnings.push({ text: 'Sem atualizacao ha mais de 3 dias', type: 'idle' });
+            }
+
+            // Deadline approaching (3 days) or overdue
+            if (po.dateRangeEnd && po.stage !== 'delivery') {
+                const end = new Date(po.dateRangeEnd);
+                const diffDays = (end - now) / (1000 * 60 * 60 * 24);
+                if (diffDays < 0) {
+                    warnings.push({ text: 'Atrasado!', type: 'danger' });
+                } else if (diffDays <= 3) {
+                    warnings.push({ text: 'Prazo se aproximando', type: 'warning' });
+                }
+            }
+            return warnings;
+        }
+
+        function getKanbanHTML() {
+            const activePOs = getBoardSearchPOs();
+            
+            let html = `<div class="overflow-x-auto pb-3"><div class="flex gap-4 min-w-max snap-x">`;
+            
+            stages.forEach(stage => {
+                const stagePOs = activePOs.filter(p => p.stage === stage.id);
+                
+                html += `
+                    <div class="flex flex-col min-w-[320px] max-w-[320px] h-[620px] bg-white dark:bg-slate-900/85 rounded-3xl border border-slate-300 dark:border-slate-700 shadow-sm shrink-0 snap-start overflow-hidden">
+                        <div class="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50 dark:bg-slate-950/70">
+                            <h2 class="font-bold flex items-center gap-2 text-sm text-slate-900 dark:text-white">
+                                <span class="w-3 h-3 rounded-full ${stage.dot}"></span>
+                                ${stage.name}
+                            </h2>
+                            <span class="text-xs font-bold bg-slate-900 px-2.5 py-1 rounded-full text-white">
+                                ${stagePOs.length}
+                            </span>
+                        </div>
+                        <div class="flex-1 overflow-y-auto p-3 kanban-col space-y-3 bg-slate-50/70 dark:bg-slate-950/40">
+                            ${stagePOs.map(po => getPOCardHTML(po, stage)).join('')}
+                            ${stagePOs.length === 0 ? `<div class="text-center text-slate-400 text-sm mt-8 italic">Nenhum item nesta etapa</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            
+            html += `</div></div>`;
+            return html;
+        }
+
+        function getArchiveHTML() {
+            const archivedPOs = getArchivedPOs().filter(po => matchSearch(po));
+            
+            return `
+                <div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                        ${archivedPOs.length ? archivedPOs.map(po => getPOCardHTML(po, null, true)).join('') : '<p class="text-slate-600 dark:text-slate-300">Nenhum pedido arquivado encontrado.</p>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getPOCardHTML(po, currentStage = null, isArchive = false) {
+            const warnings = getWarnings(po);
+            const isAdmin = state.appUser?.role === 'admin';
+            const stageMeta = getStageMeta(po.stage);
+            
+            let warnHtml = warnings.map(w => {
+                let color = w.type === 'danger' ? 'bg-red-100 text-red-700 border-red-200' : 
+                           (w.type === 'warning' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' : 'bg-orange-100 text-orange-800 border-orange-200');
+                return `<span class="text-[10px] font-bold px-2 py-0.5 rounded border ${color} inline-flex items-center gap-1 mb-1 shadow-sm"><i data-lucide="alert-circle" class="w-3 h-3"></i> ${w.text}</span>`;
+            }).join('');
+
+            // Format dates neatly
+            const dateStr = po.dateRangeStart && po.dateRangeEnd 
+                ? `${formatDateForDisplay(po.dateRangeStart)} ate ${formatDateForDisplay(po.dateRangeEnd)}` 
+                : (po.dateRangeEnd ? `Prazo: ${formatDateForDisplay(po.dateRangeEnd)}` : 'Sem prazo');
+
+            return `
+                <div class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl shadow-sm hover:shadow-md transition-shadow p-3.5 cursor-pointer group relative po-card-clickable" data-id="${po.id}">
+                    <div class="flex justify-between items-start gap-3 mb-3">
+                        <div>
+                            <div class="flex flex-wrap gap-2 mb-2">
+                                <span class="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${stageMeta.color}">
+                                    <span class="w-2 h-2 rounded-full ${stageMeta.dot}"></span>${stageMeta.name}
+                                </span>
+                                ${isArchive ? `<span class="text-[11px] bg-slate-200 dark:bg-slate-800 px-2.5 py-1 rounded-full text-slate-700 dark:text-slate-200 font-bold">Arquivado</span>` : ''}
+                            </div>
+                            <h3 class="font-bold text-sm leading-tight text-slate-900 dark:text-white pr-4">${po.title}</h3>
+                        </div>
+                    </div>
+                    
+                    <div class="flex flex-wrap gap-1 mb-2 min-h-[1.5rem]">
+                        ${warnHtml}
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-2 text-xs text-slate-700 dark:text-slate-300 space-y-0 mb-3">
+                        <p class="flex items-center gap-1"><i data-lucide="box" class="w-3 h-3"></i> ${po.quantity}x ${po.itemType}</p>
+                        <p class="flex items-center gap-1"><i data-lucide="calendar" class="w-3 h-3"></i> ${dateStr}</p>
+                        <p class="flex items-center gap-1 font-semibold ${getDaysUntil(po.dateRangeEnd) !== null && getDaysUntil(po.dateRangeEnd) < 0 ? 'text-rose-600' : 'text-slate-800 dark:text-slate-100'}"><i data-lucide="alarm-clock" class="w-3 h-3"></i> ${getDeadlineLabel(po)}</p>
+                    </div>
+
+                    ${po.stage === 'delivery' ? `
+                        <div class="mb-3 pt-2 border-t border-slate-200 dark:border-slate-700">
+                            <span class="text-xs font-bold flex items-center gap-1 ${po.paymentFinished ? 'text-green-600' : 'text-red-500'}">
+                                <i data-lucide="${po.paymentFinished ? 'check-circle' : 'circle-dashed'}" class="w-3 h-3"></i> 
+                                Pagamento: ${po.paymentFinished ? 'Concluido' : 'Pendente'}
+                            </span>
+                        </div>
+                    ` : ''}
+
+                    <div class="flex gap-1 border-t border-slate-200 dark:border-slate-700 pt-2" onclick="event.stopPropagation()">
+                        ${!isArchive ? `
+                            <select class="stage-selector bg-slate-50 dark:bg-slate-800 text-xs border border-slate-300 dark:border-slate-600 rounded-xl px-2 py-2 w-full text-slate-800 dark:text-slate-100 outline-none" data-id="${po.id}">
+                                ${stages.map(s => `<option value="${s.id}" ${po.stage === s.id ? 'selected' : ''}>Mover para: ${s.name}</option>`).join('')}
+                            </select>
+                        ` : `
+                            <button class="btn-restore flex-1 bg-blue-100 text-blue-700 hover:bg-blue-200 text-xs py-2 rounded-xl font-semibold transition-colors" data-id="${po.id}">Restaurar para o Quadro</button>
+                        `}
+                    </div>
+                </div>
+            `;
+        }
+
+        // --- Calendar Logic ---
+        function renderCalendar() {
+            const container = document.getElementById('calendar-container');
+            const summaryContainer = document.getElementById('calendar-summary-container');
+            const monthLabel = document.getElementById('cal-month-label');
+            if (!container || !summaryContainer || !monthLabel) return;
+
+            const d = state.calendarDate;
+            const year = d.getFullYear();
+            const month = d.getMonth();
+            
+            const monthNames = ["Janeiro", "Fevereiro", "Marco", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+            monthLabel.textContent = `${monthNames[month]} ${year}`;
+
+            const firstDay = new Date(year, month, 1).getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            let html = `<div class="space-y-3"><div class="calendar-grid">`;
+            
+            // Days of week header
+            const days = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+            days.forEach(day => {
+                html += `<div class="text-center text-[10px] font-bold text-slate-400 uppercase py-1">${day}</div>`;
+            });
+
+            // Blanks
+            for (let i = 0; i < firstDay; i++) {
+                html += `<div></div>`;
+            }
+
+            // Days
+            const today = new Date();
+            for (let day = 1; day <= daysInMonth; day++) {
+                const currentDateStr = `${year}-${String(month+1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const isToday = today.getDate() === day && today.getMonth() === month && today.getFullYear() === year;
+                
+                // Find POs due on this day
+                const duePOs = state.pos.filter(po => !po.archived && po.dateRangeEnd === currentDateStr);
+                
+                const hasDuePOs = duePOs.length > 0;
+                const sortedDayPOs = duePOs.sort((a, b) => {
+                    const stageA = stages.findIndex(s => s.id === a.stage);
+                    const stageB = stages.findIndex(s => s.id === b.stage);
+                    return stageA - stageB;
+                });
+                const previewHtml = sortedDayPOs.slice(0, 2).map(po => {
+                    const stageColor = stages.find(s => s.id === po.stage)?.dot || 'bg-slate-500';
+                    return `<div class="truncate flex items-center gap-1"><span class="w-2 h-2 rounded-full ${stageColor} shrink-0"></span><span class="truncate">${po.title}</span></div>`;
+                }).join('');
+
+                html += `
+                    <div class="min-h-[116px] rounded-2xl border ${hasDuePOs ? 'border-sky-200 dark:border-sky-700 bg-sky-50/60 dark:bg-sky-950/30' : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900'} p-2.5 flex flex-col ${isToday ? 'ring-2 ring-sky-500 ring-offset-2 ring-offset-white dark:ring-offset-slate-900' : ''}">
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-sm ${isToday ? 'font-black text-sky-700 dark:text-sky-300' : 'font-bold text-slate-800 dark:text-slate-100'}">${day}</span>
+                            ${hasDuePOs ? `<span class="text-[10px] font-bold px-2 py-1 rounded-full bg-slate-900 text-white">${duePOs.length}</span>` : ''}
+                        </div>
+                        <div class="text-[11px] text-slate-700 dark:text-slate-300 space-y-1">
+                            ${hasDuePOs ? previewHtml : '<span class="text-slate-400 dark:text-slate-500">Livre</span>'}
+                            ${duePOs.length > 2 ? `<div class="text-[10px] font-bold text-sky-700 dark:text-sky-300">+${duePOs.length - 2} pedido(s)</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            }
+            html += `</div></div>`;
+            container.innerHTML = html;
+
+            const upcoming = getActivePOs()
+                .filter(po => po.dateRangeEnd)
+                .sort((a, b) => (a.dateRangeEnd || '').localeCompare(b.dateRangeEnd || ''))
+                .slice(0, 10);
+
+            summaryContainer.innerHTML = `
+                <div class="bg-slate-50 dark:bg-slate-900/70 rounded-3xl border border-slate-300 dark:border-slate-700 p-4 md:p-5">
+                    <div class="flex items-center justify-between gap-3 mb-4">
+                        <div>
+                            <p class="text-xs font-bold uppercase tracking-[0.2em] text-slate-700 dark:text-slate-400">Proximos vencimentos</p>
+                            <h3 class="text-lg font-black text-slate-900 dark:text-white mt-1">Lista rapida</h3>
+                        </div>
+                        <span class="text-xs font-bold px-3 py-1 rounded-full bg-slate-900 text-white">${upcoming.length}</span>
+                    </div>
+                    <div class="space-y-3 max-h-[560px] overflow-y-auto calendar-aside-list pr-1">
+                        ${upcoming.length ? upcoming.map(po => {
+                            const stageMeta = getStageMeta(po.stage);
+                            return `
+                                <div class="rounded-2xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 p-3">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <div>
+                                            <p class="font-bold text-sm text-slate-900 dark:text-white">${po.title}</p>
+                                            <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">${formatDateForDisplay(po.dateRangeEnd)} • ${getDeadlineLabel(po)}</p>
+                                        </div>
+                                        <span class="text-[10px] font-bold px-2 py-1 rounded-full ${stageMeta.color}">${stageMeta.name}</span>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('') : '<p class="text-sm text-slate-600 dark:text-slate-300">Nenhum pedido com prazo definido.</p>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getOrdersExplorerHTML() {
+            const visibleOrders = getVisibleOrdersForExplorer();
+
+            return `
+                <div class="space-y-5">
+                    <div class="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4">
+                        <div>
+                            <p class="text-xs font-bold uppercase tracking-[0.25em] text-slate-700 dark:text-slate-400">Explorador completo</p>
+                            <h2 class="text-xl md:text-2xl font-black text-slate-900 dark:text-white mt-1">Pedidos detalhados</h2>
+                            <p class="text-sm text-slate-700 dark:text-slate-300 mt-1">Esta busca e independente do quadro. Serve para ver ativos e inativos sem abrir cada card do topo.</p>
+                        </div>
+                        <div class="w-full xl:max-w-xl">
+                            <label for="orders-search-input" class="block text-xs font-bold uppercase tracking-[0.2em] text-slate-700 dark:text-slate-400 mb-2">Busca do explorador</label>
+                            <div class="relative">
+                                <i data-lucide="search" class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
+                                <input type="text" id="orders-search-input" value="${state.orderSearchQuery}" placeholder="Buscar ativos, arquivados, pagamento, tecido..." class="w-full pl-11 pr-4 py-3 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-2xl focus:ring-2 focus:ring-sky-500 outline-none text-sm shadow-sm text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2">
+                        <button class="order-scope-btn px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${state.orderSearchScope === 'all' ? 'bg-slate-900 dark:bg-sky-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'}" data-scope="all">Todos</button>
+                        <button class="order-scope-btn px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${state.orderSearchScope === 'active' ? 'bg-slate-900 dark:bg-sky-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'}" data-scope="active">Ativos</button>
+                        <button class="order-scope-btn px-3 py-2 rounded-xl text-sm font-semibold transition-colors ${state.orderSearchScope === 'archived' ? 'bg-slate-900 dark:bg-sky-500 text-white' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700'}" data-scope="archived">Arquivados</button>
+                        <span class="px-3 py-2 rounded-xl bg-sky-100 dark:bg-sky-950/50 text-sky-800 dark:text-sky-300 border border-sky-200 dark:border-sky-800 text-sm font-semibold">${visibleOrders.length} pedido(s) listados</span>
+                    </div>
+
+                    <div class="space-y-3 max-h-[820px] overflow-y-auto pr-1 orders-list">
+                        ${visibleOrders.length ? visibleOrders.map(po => getExplorerRowHTML(po)).join('') : '<div class="rounded-2xl border border-dashed border-slate-400 dark:border-slate-700 p-8 text-center text-slate-700 dark:text-slate-300">Nenhum pedido encontrado nessa busca.</div>'}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getExplorerRowHTML(po) {
+            const stageMeta = getStageMeta(po.stage);
+            const expanded = isOrderExpanded(po.id);
+            const warnings = getWarnings(po);
+            const dateWindow = po.dateRangeStart && po.dateRangeEnd
+                ? `${formatDateForDisplay(po.dateRangeStart)} ate ${formatDateForDisplay(po.dateRangeEnd)}`
+                : (po.dateRangeEnd ? formatDateForDisplay(po.dateRangeEnd) : 'Sem prazo');
+
+            return `
+                <div class="rounded-3xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 overflow-hidden shadow-sm">
+                    <button class="w-full text-left px-4 py-4 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors order-expand-toggle" data-id="${po.id}">
+                        <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="flex flex-wrap items-center gap-2 mb-2">
+                                    <span class="inline-flex items-center gap-1 text-[11px] font-bold px-2.5 py-1 rounded-full ${stageMeta.color}">
+                                        <span class="w-2 h-2 rounded-full ${stageMeta.dot}"></span>${stageMeta.name}
+                                    </span>
+                                    <span class="text-[11px] font-bold px-2.5 py-1 rounded-full ${po.archived ? 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-200' : 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300'}">${po.archived ? 'Arquivado' : 'Ativo'}</span>
+                                    ${po.paymentFinished ? '<span class="text-[11px] font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700">Pago</span>' : '<span class="text-[11px] font-bold px-2.5 py-1 rounded-full bg-amber-50 text-amber-700">Pagamento pendente</span>'}
+                                </div>
+                                <div class="font-bold text-base text-slate-900 dark:text-white truncate">${po.title}</div>
+                                <div class="text-sm text-slate-600 dark:text-slate-300 mt-1">${po.quantity}x ${po.itemType} • ${dateWindow}</div>
+                            </div>
+                            <div class="flex items-center gap-3 shrink-0">
+                                <div class="text-right">
+                                    <div class="text-sm font-bold ${getDaysUntil(po.dateRangeEnd) !== null && getDaysUntil(po.dateRangeEnd) < 0 ? 'text-rose-600' : 'text-slate-900 dark:text-white'}">${getDeadlineLabel(po)}</div>
+                                    <div class="text-xs text-slate-600 dark:text-slate-400">Atualizado em ${formatDateTimeForDisplay(po.updatedAt || po.createdAt)}</div>
+                                </div>
+                                <div class="w-10 h-10 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300">
+                                    <i data-lucide="${expanded ? 'chevron-up' : 'chevron-down'}" class="w-5 h-5"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </button>
+                    ${expanded ? `
+                        <div class="px-4 pb-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-950/40">
+                            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 pt-4">
+                                <div class="space-y-3 text-sm text-slate-700 dark:text-slate-300">
+                                    <div><span class="font-bold text-slate-900 dark:text-white">Descricao:</span> ${po.description || 'Sem descricao.'}</div>
+                                    <div><span class="font-bold text-slate-900 dark:text-white">Tecido:</span> ${po.clothType || 'Nao informado'}</div>
+                                    <div><span class="font-bold text-slate-900 dark:text-white">Observacoes:</span> ${po.notes || 'Nenhuma observacao privada.'}</div>
+                                </div>
+                                <div class="space-y-3">
+                                    <div class="flex flex-wrap gap-2">
+                                        ${warnings.length ? warnings.map(w => {
+                                            const tone = w.type === 'danger' ? 'bg-red-100 text-red-700 border-red-200' : (w.type === 'warning' ? 'bg-yellow-100 text-yellow-800 border-yellow-200' : 'bg-orange-100 text-orange-800 border-orange-200');
+                                            return `<span class="text-[11px] font-bold px-2.5 py-1 rounded-full border ${tone}">${w.text}</span>`;
+                                        }).join('') : '<span class="text-[11px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-emerald-700">Sem alertas</span>'}
+                                    </div>
+                                    <div class="flex flex-wrap gap-2">
+                                        ${!po.archived ? `
+                                            <select class="stage-selector bg-white dark:bg-slate-900 text-sm border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 min-w-[220px] text-slate-800 dark:text-slate-100 outline-none" data-id="${po.id}">
+                                                ${stages.map(s => `<option value="${s.id}" ${po.stage === s.id ? 'selected' : ''}>Mover para: ${s.name}</option>`).join('')}
+                                            </select>
+                                        ` : `
+                                            <button class="btn-restore bg-blue-100 text-blue-700 hover:bg-blue-200 text-sm px-4 py-2 rounded-xl font-semibold transition-colors" data-id="${po.id}">Restaurar para o Quadro</button>
+                                        `}
+                                        <button class="open-order-modal bg-slate-900 text-white hover:bg-slate-700 text-sm px-4 py-2 rounded-xl font-semibold transition-colors" data-id="${po.id}">Abrir detalhes</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        // --- Modals ---
+        
+        function openPOModal(po = null) {
+            const isAdmin = state.appUser?.role === 'admin';
+            const isNew = !po;
+            const data = po || {
+                title: '', description: '', itemType: 'Camiseta', clothType: '', quantity: 1,
+                dateRangeStart: '', dateRangeEnd: '', stage: 'art', paymentFinished: false,
+                price: 0, notes: '', archived: false
+            };
+
+            const modalHtml = `
+                <div id="overlay" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div class="bg-white dark:bg-slate-800 w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 flex flex-col">
+                        
+                        <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center sticky top-0 bg-white/95 dark:bg-slate-800/95 backdrop-blur z-10">
+                            <h2 class="text-xl font-bold">${isNew ? 'Criar Novo Pedido' : 'Detalhes do Pedido'}</h2>
+                            <button id="btn-close-modal" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                                <i data-lucide="x" class="w-6 h-6"></i>
+                            </button>
+                        </div>
+
+                        <form id="po-form" class="p-6 space-y-6 flex-1">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <!-- Title -->
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-semibold mb-1">Titulo / Nome do Pedido *</label>
+                                    <input type="text" id="po-title" required value="${data.title}" class="w-full p-2 border rounded bg-slate-50 dark:bg-slate-900 dark:border-slate-600 outline-none focus:border-blue-500" placeholder="ex.: Erika - Fogueira">
+                                </div>
+                                
+                                <!-- Items & Cloth -->
+                                <div>
+                                    <label class="block text-sm font-semibold mb-1">Tipo de Item</label>
+                                    <select id="po-item" class="w-full p-2 border rounded bg-slate-50 dark:bg-slate-900 dark:border-slate-600 outline-none">
+                                        <option value="Camiseta" ${data.itemType === 'Camiseta' || data.itemType === 'Shirt' ? 'selected' : ''}>Camiseta</option>
+                                        <option value="Bandeiras" ${data.itemType === 'Bandeiras' || data.itemType === 'Flags' ? 'selected' : ''}>Bandeiras</option>
+                                        <option value="Medalhas" ${data.itemType === 'Medalhas' || data.itemType === 'Medals' ? 'selected' : ''}>Medalhas</option>
+                                        <option value="Banner" ${data.itemType === 'Banner' ? 'selected' : ''}>Banner</option>
+                                        <option value="Outro" ${data.itemType === 'Outro' || data.itemType === 'Other' ? 'selected' : ''}>Outro</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-semibold mb-1">Tipo de Tecido</label>
+                                    <input type="text" id="po-cloth" value="${data.clothType}" class="w-full p-2 border rounded bg-slate-50 dark:bg-slate-900 dark:border-slate-600 outline-none" placeholder="ex.: Algodao, Poliester">
+                                </div>
+
+                                <!-- Quantity & Stage -->
+                                <div>
+                                    <label class="block text-sm font-semibold mb-1">Quantidade</label>
+                                    <input type="number" id="po-qty" required min="1" value="${data.quantity}" class="w-full p-2 border rounded bg-slate-50 dark:bg-slate-900 dark:border-slate-600 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-semibold mb-1">Etapa Atual</label>
+                                    <select id="po-stage" class="w-full p-2 border rounded bg-slate-50 dark:bg-slate-900 dark:border-slate-600 outline-none">
+                                        ${stages.map(s => `<option value="${s.id}" ${data.stage === s.id ? 'selected' : ''}>${s.name}</option>`).join('')}
+                                    </select>
+                                </div>
+
+                                <!-- Dates -->
+                                <div>
+                                    <label class="block text-sm font-semibold mb-1 text-slate-600 dark:text-slate-400">Inicio da Janela de Entrega</label>
+                                    <input type="date" id="po-start" value="${data.dateRangeStart}" class="w-full p-2 border rounded bg-slate-50 dark:bg-slate-900 dark:border-slate-600 outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-bold text-red-600 dark:text-red-400 mb-1">Prazo / Ultimo Dia *</label>
+                                    <input type="date" id="po-end" required value="${data.dateRangeEnd}" class="w-full p-2 border rounded border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-900/10 outline-none focus:border-red-500">
+                                </div>
+
+                                <!-- Description -->
+                                <div class="md:col-span-2">
+                                    <label class="block text-sm font-semibold mb-1">Descricao</label>
+                                    <textarea id="po-desc" rows="3" class="w-full p-2 border rounded bg-slate-50 dark:bg-slate-900 dark:border-slate-600 outline-none">${data.description}</textarea>
+                                </div>
+
+                                <!-- Payment Status (Only relevant later, but good to have) -->
+                                <div class="md:col-span-2 flex items-center gap-2 bg-slate-50 dark:bg-slate-900 p-3 rounded border dark:border-slate-600">
+                                    <input type="checkbox" id="po-payment" ${data.paymentFinished ? 'checked' : ''} class="w-4 h-4 text-blue-600">
+                                    <label for="po-payment" class="text-sm font-semibold cursor-pointer">Pagamento Concluido</label>
+                                </div>
+
+                                <!-- Admin Only Fields -->
+                                ${isAdmin ? `
+                                    <div class="md:col-span-2 mt-4 pt-4 border-t border-slate-200 dark:border-slate-700">
+                                        <h3 class="text-xs font-bold uppercase text-slate-400 mb-3"><i data-lucide="lock" class="w-3 h-3 inline"></i> Detalhes Apenas do Administrador</h3>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <label class="block text-sm font-semibold mb-1">Preco / Custo</label>
+                                                <input type="number" step="0.01" id="po-price" value="${data.price}" class="w-full p-2 border rounded bg-yellow-50 dark:bg-yellow-900/10 dark:border-yellow-700/50 outline-none">
+                                            </div>
+                                            <div class="md:col-span-2">
+                                                <label class="block text-sm font-semibold mb-1">Observacoes Privadas</label>
+                                                <textarea id="po-notes" rows="2" class="w-full p-2 border rounded bg-yellow-50 dark:bg-yellow-900/10 dark:border-yellow-700/50 outline-none">${data.notes}</textarea>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ` : ''}
+                            </div>
+                        </form>
+                        
+                        <div class="px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-between rounded-b-xl">
+                            ${!isNew && isAdmin ? `
+                                <button type="button" id="btn-archive-po" class="px-4 py-2 text-sm font-bold flex items-center gap-2 ${data.archived ? 'text-blue-600 hover:bg-blue-100' : 'text-slate-600 hover:bg-slate-200 dark:text-slate-300 dark:hover:bg-slate-700'} rounded transition-colors">
+                                    <i data-lucide="${data.archived ? 'rotate-ccw' : 'archive'}" class="w-4 h-4"></i> ${data.archived ? 'Restaurar' : 'Marcar como Concluido e Arquivar'}
+                                </button>
+                            ` : '<div></div>'}
+                            
+                            <div class="flex gap-2">
+                                <button id="btn-cancel-modal" class="px-4 py-2 rounded text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 font-semibold transition-colors">Cancelar</button>
+                                <button form="po-form" type="submit" class="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded font-bold shadow transition-colors flex items-center gap-2">
+                                    <i data-lucide="save" class="w-4 h-4"></i> Salvar Pedido
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('modal-root').innerHTML = modalHtml;
+            lucide.createIcons();
+
+            // Bind Modal Events
+            const close = () => closeModal();
+            document.getElementById('btn-close-modal').addEventListener('click', close);
+            document.getElementById('btn-cancel-modal').addEventListener('click', close);
+            document.getElementById('overlay').addEventListener('click', (e) => {
+                if(e.target.id === 'overlay') close();
+            });
+
+            if(!isNew && isAdmin) {
+                document.getElementById('btn-archive-po').addEventListener('click', async () => {
+                    await toggleArchive(data.id, !data.archived);
+                    close();
+                });
+            }
+
+            document.getElementById('po-form').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const newData = {
+                    ...data,
+                    title: document.getElementById('po-title').value,
+                    description: document.getElementById('po-desc').value,
+                    itemType: document.getElementById('po-item').value,
+                    clothType: document.getElementById('po-cloth').value,
+                    quantity: parseInt(document.getElementById('po-qty').value) || 1,
+                    stage: document.getElementById('po-stage').value,
+                    dateRangeStart: document.getElementById('po-start').value,
+                    dateRangeEnd: document.getElementById('po-end').value,
+                    paymentFinished: document.getElementById('po-payment').checked,
+                };
+                if(isAdmin) {
+                    newData.price = parseFloat(document.getElementById('po-price')?.value) || 0;
+                    newData.notes = document.getElementById('po-notes')?.value || '';
+                }
+                await savePO(newData, isNew);
+            });
+        }
+
+        function openHistoryModal() {
+            const html = `
+                <div id="overlay" class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+                    <div class="bg-white dark:bg-slate-800 w-full max-w-3xl h-[80vh] flex flex-col rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700">
+                        <div class="px-6 py-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-white/95 dark:bg-slate-800/95 rounded-t-xl">
+                            <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="clock" class="w-5 h-5 text-blue-500"></i> Historico de Atividades</h2>
+                            <button id="btn-close-history" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"><i data-lucide="x" class="w-6 h-6"></i></button>
+                        </div>
+                        <div class="flex-1 overflow-y-auto p-4 space-y-3">
+                            ${state.history.length === 0 ? '<p class="text-slate-500 text-center mt-10">Nenhum historico registrado ainda.</p>' : ''}
+                            ${state.history.map(log => `
+                                <div class="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg border border-slate-100 dark:border-slate-800 flex gap-4 items-start">
+                                    <div class="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 p-2 rounded-full shrink-0">
+                                        <i data-lucide="activity" class="w-4 h-4"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm">
+                                            <span class="font-bold capitalize">${log.user}</span> 
+                                            <span class="text-slate-500">fez</span> 
+                                            <span class="font-semibold text-blue-600 dark:text-blue-400">${log.action}</span>
+                                            ${log.poName ? ` <span class="text-slate-500">em</span> <span class="font-bold">${log.poName}</span>` : ''}
+                                        </p>
+                                        <p class="text-xs text-slate-600 dark:text-slate-400 mt-1">${log.details}</p>
+                                        <p class="text-[10px] text-slate-400 dark:text-slate-500 mt-1 uppercase font-bold tracking-wider">${formatDateTimeForDisplay(log.timestamp)}</p>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-root').innerHTML = html;
+            lucide.createIcons();
+            
+            const close = () => closeModal();
+            document.getElementById('btn-close-history').addEventListener('click', close);
+            document.getElementById('overlay').addEventListener('click', (e) => {
+                if(e.target.id === 'overlay') close();
+            });
+        }
+
+        function closeModal() {
+            document.getElementById('modal-root').innerHTML = '';
+        }
+
+        // --- Event Listeners ---
+
+        let globalListenersBound = false;
+
+        function attachGlobalListeners() {
+            if (globalListenersBound) return;
+            globalListenersBound = true;
+
+            document.body.addEventListener('click', (e) => {
+                const target = e.target;
+                
+                // PO Card Click (Edit)
+                const card = target.closest('.po-card-clickable');
+                if (card && !target.closest('select') && !target.closest('.btn-restore') && !target.closest('.open-order-modal')) {
+                    const po = state.pos.find(p => p.id === card.dataset.id);
+                    if(po) openPOModal(po);
+                }
+
+                if (target.closest('.open-order-modal')) {
+                    const id = target.closest('.open-order-modal').dataset.id;
+                    const po = state.pos.find(p => p.id === id);
+                    if (po) openPOModal(po);
+                }
+
+                if (target.closest('.order-expand-toggle')) {
+                    const id = target.closest('.order-expand-toggle').dataset.id;
+                    toggleOrderExpanded(id);
+                    return;
+                }
+
+                if (target.closest('.order-scope-btn')) {
+                    const scope = target.closest('.order-scope-btn').dataset.scope;
+                    setState({ orderSearchScope: scope });
+                    return;
+                }
+
+                // Buttons
+                if (target.closest('#btn-theme-toggle')) toggleTheme();
+                if (target.closest('#btn-new-po')) openPOModal();
+                if (target.closest('#btn-history')) openHistoryModal();
+                if (target.closest('#btn-toggle-view')) setState({ currentView: state.currentView === 'board' ? 'archived' : 'board' });
+                if (target.closest('#btn-logout')) handleLogout();
+                
+                // Calendar Nav
+                if (target.closest('#cal-prev')) {
+                    const d = new Date(state.calendarDate); d.setMonth(d.getMonth() - 1); setState({ calendarDate: d });
+                }
+                if (target.closest('#cal-next')) {
+                    const d = new Date(state.calendarDate); d.setMonth(d.getMonth() + 1); setState({ calendarDate: d });
+                }
+
+                // Restore
+                if (target.closest('.btn-restore')) {
+                    const id = target.closest('.btn-restore').dataset.id;
+                    toggleArchive(id, false);
+                }
+            });
+
+            document.body.addEventListener('change', (e) => {
+                const target = e.target;
+                // Stage Selection
+                if (target.classList.contains('stage-selector')) {
+                    updatePOStage(target.dataset.id, target.value);
+                }
+            });
+
+            document.body.addEventListener('input', (e) => {
+                if (e.target.id === 'search-input') {
+                    setState({ searchQuery: e.target.value });
+                }
+                if (e.target.id === 'orders-search-input') {
+                    setState({ orderSearchQuery: e.target.value });
+                }
+            });
+
+            document.body.addEventListener('submit', (e) => {
+                if (e.target.id === 'login-form') {
+                    e.preventDefault();
+                    handleLogin(document.getElementById('login-user').value, document.getElementById('login-pass').value);
+                }
+            });
+        }
+    </script>
+</body>
+</html>
